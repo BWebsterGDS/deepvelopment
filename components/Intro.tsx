@@ -9,11 +9,20 @@ const WORD = "DEEPVELOPMENT";
 
 /**
  * Two intro treatments, same timeline contract:
- *   "pixel" — the wordmark resolves from 44px mosaic blocks to sharp, then dissolves.
+ *   "pixel" — the wordmark lives as a coarse mosaic while the counter runs, the blocks
+ *             shimmering like something computing; it settles, glitches once, then
+ *             cascades from 44px blocks to sharp type and dissolves into the hero.
  *   "mask"  — the letterforms are holes in a black plate; the plate scales through them.
- * Which one ships is a build-time decision (NEXT_PUBLIC_INTRO) — one treatment per
- * deployment, no runtime switch. Both write `reveal.intro` (0 → 1) which the hero shader
- * reads to un-pixelate in sync, and `--intro-p` on <html> for the scale-through.
+ *
+ * The pixel choreography is procedural on a canvas, not a video, on purpose. A film is
+ * a fixed aspect ratio, but the loading placeholder is composed against the live
+ * viewport — so a video always opened with a visible cut, and generated footage added
+ * texture the flat mosaic never had. Drawing every phase with the same renderer makes
+ * the first frame of the animation *identical* to the placeholder at any window size.
+ *
+ * Which treatment ships is a build-time decision (NEXT_PUBLIC_INTRO). Both write
+ * `reveal.intro` (0 → 1), which the hero shader reads to un-pixelate in sync, and
+ * `--intro-p` on <html> for the copy scale-through.
  */
 export default function Intro() {
   const [variant, setVariant] = useState<IntroVariant>("pixel");
@@ -27,7 +36,6 @@ export default function Intro() {
   const plateRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const svgGroupRef = useRef<SVGGElement>(null);
   const counterRef = useRef<HTMLSpanElement>(null);
   const barRef = useRef<HTMLSpanElement>(null);
@@ -81,11 +89,24 @@ export default function Intro() {
       return;
     }
 
-    const state = { count: 0, block: 44, alpha: 1, p: 0 };
+    const bailEarly = window.setTimeout(finish, 9500);
+
+    /**
+     * fx is everything the draw function reads:
+     *   block   — mosaic cell size in px (44 = the placeholder, 1 = sharp)
+     *   shimmer — fraction of cells whose brightness breathes each frame
+     *   glitch  — 0..1 slice-tear + ghost-split amount
+     *   alpha   — wordmark opacity for the final dissolve
+     *   p       — hero reveal progress, mirrored into reveal.intro
+     */
+    const fx = { count: 0, block: 44, shimmer: 0.28, glitch: 0, alpha: 1, p: 0 };
 
     // ---- pixel variant: build a source canvas of the wordmark once ----
     let src: HTMLCanvasElement | null = null;
     let tmp: HTMLCanvasElement | null = null;
+    let tmp2: HTMLCanvasElement | null = null;
+    let pyrA: HTMLCanvasElement | null = null;
+    let pyrB: HTMLCanvasElement | null = null;
 
     const buildSource = () => {
       const w = window.innerWidth;
@@ -145,41 +166,117 @@ export default function Intro() {
       s.fillText("FULL-STACK ENGINEERING", w / 2, h / 2 + size * 0.95);
 
       tmp = document.createElement("canvas");
+      tmp2 = document.createElement("canvas");
+      pyrA = document.createElement("canvas");
+      pyrB = document.createElement("canvas");
     };
 
     const drawPixel = () => {
       const c = canvasRef.current;
-      if (!c || !src || !tmp) return;
+      if (!c || !src || !tmp || !tmp2) return;
       const ctx = c.getContext("2d")!;
-      const block = Math.max(1, state.block);
+      const block = Math.max(1, fx.block);
       const bw = Math.max(1, Math.round(src.width / block));
       const bh = Math.max(1, Math.round(src.height / block));
       tmp.width = bw;
       tmp.height = bh;
       const t = tmp.getContext("2d")!;
       t.clearRect(0, 0, bw, bh);
-      t.drawImage(src, 0, 0, bw, bh);
+
+      /**
+       * Downscale through a pyramid of halvings rather than in one jump. A single
+       * drawImage to a 29-cell-wide canvas *samples* the source, so thin glyph
+       * strokes fall between sample points and most of the word simply vanishes —
+       * the mosaic showed a scatter of lucky cells instead of the wordmark. Halving
+       * repeatedly approximates a box filter: every stroke contributes to its cell.
+       */
+      let from: HTMLCanvasElement = src;
+      let fw = src.width;
+      let fh = src.height;
+      let ping = true;
+      while (fw / 2 >= bw * 2 && fh / 2 >= 2) {
+        const dst = ping ? pyrA! : pyrB!;
+        const hw = Math.max(1, Math.round(fw / 2));
+        const hh = Math.max(1, Math.round(fh / 2));
+        dst.width = hw;
+        dst.height = hh;
+        const dctx = dst.getContext("2d")!;
+        dctx.clearRect(0, 0, hw, hh);
+        dctx.drawImage(from, 0, 0, fw, fh, 0, 0, hw, hh);
+        from = dst;
+        fw = hw;
+        fh = hh;
+        ping = !ping;
+      }
+      t.drawImage(from, 0, 0, fw, fh, 0, 0, bw, bh);
+
+      // living pixels: a sprinkle of cells breathe in brightness while the mosaic is
+      // coarse — it reads as the wordmark being computed rather than just sitting there
+      if (fx.shimmer > 0.01 && block > 6) {
+        const img = t.getImageData(0, 0, bw, bh);
+        const d = img.data;
+        const cells = Math.floor(bw * bh * 0.06 * fx.shimmer);
+        for (let i = 0; i < cells; i++) {
+          const idx = (Math.random() * bw * bh) | 0;
+          const o = idx * 4;
+          if (d[o + 3] === 0) continue; // leave the empty background alone
+          const f = 0.45 + Math.random() * 1.1;
+          d[o] = Math.min(255, d[o] * f);
+          d[o + 1] = Math.min(255, d[o + 1] * f);
+          d[o + 2] = Math.min(255, d[o + 2] * f);
+        }
+        t.putImageData(img, 0, 0);
+      }
+
+      // glitch: block-aligned horizontal slice tears, done on the small canvas so the
+      // displacement is always a whole number of cells — it stays inside the pixel
+      // language instead of looking like a video effect
+      if (fx.glitch > 0.01) {
+        tmp2.width = bw;
+        tmp2.height = bh;
+        const t2 = tmp2.getContext("2d")!;
+        t2.clearRect(0, 0, bw, bh);
+        t2.drawImage(tmp, 0, 0);
+        const tears = 2 + ((fx.glitch * 4) | 0);
+        for (let i = 0; i < tears; i++) {
+          const y = (Math.random() * bh) | 0;
+          const rows = 1 + ((Math.random() * 2) | 0);
+          const dx = Math.round((Math.random() - 0.5) * fx.glitch * bw * 0.14);
+          t.clearRect(0, y, bw, rows);
+          t.drawImage(tmp2, 0, y, bw, rows, dx, y, bw, rows);
+        }
+      }
 
       ctx.clearRect(0, 0, c.width, c.height);
       ctx.imageSmoothingEnabled = false;
-      ctx.globalAlpha = state.alpha;
+      ctx.globalAlpha = fx.alpha;
       ctx.drawImage(tmp, 0, 0, bw, bh, 0, 0, c.width, c.height);
+
+      // ghost split during the glitch: the same mosaic drawn faint and offset by one
+      // cell either side, which reads as a signal splitting rather than blurring
+      if (fx.glitch > 0.01) {
+        const shift = Math.max(2, (c.width / bw) | 0);
+        ctx.globalAlpha = fx.alpha * 0.28 * fx.glitch;
+        ctx.drawImage(tmp, 0, 0, bw, bh, shift, 0, c.width, c.height);
+        ctx.drawImage(tmp, 0, 0, bw, bh, -shift, 0, c.width, c.height);
+      }
       ctx.globalAlpha = 1;
     };
 
     const writeHud = () => {
       if (counterRef.current)
-        counterRef.current.textContent = String(Math.round(state.count)).padStart(3, "0");
-      if (barRef.current) barRef.current.style.transform = `scaleX(${state.count / 100})`;
+        counterRef.current.textContent = String(Math.round(fx.count)).padStart(3, "0");
+      if (barRef.current) barRef.current.style.transform = `scaleX(${fx.count / 100})`;
     };
 
     const syncReveal = () => {
-      reveal.intro = state.p;
-      document.documentElement.style.setProperty("--intro-p", state.p.toFixed(4));
+      reveal.intro = fx.p;
+      document.documentElement.style.setProperty("--intro-p", fx.p.toFixed(4));
     };
 
     if (variant === "pixel") {
       buildSource();
+      drawPixel();
       // webfont may land after first paint; redraw with real metrics when it does
       document.fonts?.ready.then(() => {
         if (variant !== "pixel") return;
@@ -188,37 +285,17 @@ export default function Intro() {
       });
     }
 
-    /**
-     * Pixel variant, when the network cooperates: a generated video plays the
-     * assembly — blocks swarming into the wordmark — instead of the canvas
-     * resolve. The canvas path is the guaranteed fallback: the video gets until
-     * the end of the counter to become playable, and any failure at any point
-     * falls back or exits cleanly, so nobody ever waits on an mp4.
-     * `?intro=pixel` forces the canvas path; `?intro=video` waits for the file
-     * (QA only). Data-saver connections never fetch it at all.
-     */
-    const q = new URLSearchParams(window.location.search).get("intro");
-    const saveData =
-      (navigator as { connection?: { saveData?: boolean } }).connection?.saveData === true;
-    const tryVideo = variant === "pixel" && q !== "pixel" && !saveData;
-    let videoFailed = false;
-    let videoStarted = false;
-    let settled = false; // exactly one path runs: video exit, canvas resolve, or bail
-
-    const HURRY_TO = 1.9;
-    let hurried = false;
-    let video: HTMLVideoElement | null = null;
-
-    // watchdog: a stalled tween must never leave someone on a black locked screen.
-    // Reassigned with more headroom if the video path is adopted.
-    let bail = window.setTimeout(finish, 9500);
-
-    const tl = gsap.timeline();
+    const tl = gsap.timeline({ onComplete: finish });
     tlRef.current = tl;
-    let activeTl: gsap.core.Timeline = tl;
+    // QA hook: ?introDebug=1 exposes the timeline so tests can freeze exact phases.
+    // Screenshot tools race a live timeline and always lose; a paused one cannot move.
+    if (new URLSearchParams(window.location.search).get("introDebug") === "1") {
+      (window as unknown as { __introTl?: gsap.core.Timeline }).__introTl = tl;
+      window.clearTimeout(bailEarly);
+    }
 
     // shared: the loader count
-    tl.to(state, {
+    tl.to(fx, {
       count: 100,
       duration: variant === "pixel" ? 1.6 : 1.45,
       ease: "power1.inOut",
@@ -229,106 +306,40 @@ export default function Intro() {
     // would run the reveal on top of the loader instead of after it
     tl.addLabel("reveal");
 
-    /** shared tail: hero un-pixelates while the plate fades out over it */
-    const runExit = () => {
-      if (settled) return;
-      settled = true;
-      const ex = gsap.timeline({ onComplete: finish });
-      activeTl = ex;
-      ex.to(state, { p: 1, duration: 1.4, ease: "power2.out", onUpdate: syncReveal }, 0)
-        .to(plate, { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 0.15)
-        .set(plate, { pointerEvents: "none" }, 0.15);
-      if (hurried) ex.timeScale(1.5);
-    };
+    if (variant === "pixel") {
+      /**
+       * The arc, all in the mosaic's own language:
+       *   counting — blocks shimmer gently, the word sits coarse (== the placeholder)
+       *   settle   — the shimmer dies away: visible, still pixelated
+       *   glitch   — two short block-aligned tears with a ghost split
+       *   cascade  — 44px blocks subdivide to sharp type
+       *   hold     — sharp wordmark sits for a beat, then dissolves into the hero
+       */
+      tl.to(
+        fx,
+        { shimmer: 0.5, duration: 1.6, ease: "power1.in", onUpdate: drawPixel },
+        0
+      );
 
-    const runCanvasResolve = () => {
-      if (settled) return;
-      settled = true;
-      drawPixel();
-      // resolve → HOLD sharp → dissolve. Without the hold the wordmark was still
-      // sharpening when the fade started, so it was never actually seen resolved.
-      const c = gsap.timeline({ onComplete: finish });
-      activeTl = c;
-      c.to(state, { block: 1, duration: 1.05, ease: "expo.out", onUpdate: drawPixel }, 0)
-        .to(hudRef.current, { opacity: 0, duration: 0.45, ease: "power2.in" }, 1.35)
-        // 0.8s of nothing in between: the wordmark just sits there, sharp
-        .to(state, { alpha: 0, duration: 0.7, ease: "power2.in", onUpdate: drawPixel }, 1.85)
-        .to(state, { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal }, 1.75)
-        .to(plate, { opacity: 0, duration: 0.65, ease: "power2.inOut" }, 1.95)
+      tl.to(fx, { shimmer: 0, duration: 0.45, ease: "power1.out", onUpdate: drawPixel }, "reveal")
+        .to(fx, { glitch: 1, duration: 0.09, ease: "power2.in", onUpdate: drawPixel }, "reveal+=0.55")
+        .to(fx, { glitch: 0, duration: 0.07, onUpdate: drawPixel }, "reveal+=0.64")
+        .to(fx, { glitch: 0.75, duration: 0.06, onUpdate: drawPixel }, "reveal+=0.79")
+        .to(fx, { glitch: 0, duration: 0.09, onUpdate: drawPixel }, "reveal+=0.85")
+        .to(
+          fx,
+          { block: 1, duration: 1.0, ease: "power3.inOut", onUpdate: drawPixel },
+          "reveal+=0.98"
+        )
+        .to(hudRef.current, { opacity: 0, duration: 0.45, ease: "power2.in" }, "reveal+=1.65")
+        // ~0.5s of nothing here: the wordmark just sits there, sharp
+        .to(fx, { alpha: 0, duration: 0.6, ease: "power2.in", onUpdate: drawPixel }, "reveal+=2.5")
+        .to(fx, { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal }, "reveal+=2.4")
+        .to(plate, { opacity: 0, duration: 0.65, ease: "power2.inOut" }, "reveal+=2.6")
         // the hero un-pixelate outlives the plate fade; stop the invisible plate
         // swallowing clicks in between
-        .set(plate, { pointerEvents: "none" }, 1.95);
-      if (hurried) c.timeScale(Math.max(1, c.duration() / HURRY_TO));
-    };
-
-    const runVideo = (v: HTMLVideoElement) => {
-      if (settled) return;
-      window.clearTimeout(bail);
-      bail = window.setTimeout(finish, 12000);
-      v.playbackRate = hurried ? 2.6 : 1;
-      v.play()
-        .then(() => {
-          videoStarted = true;
-          // crossfade mosaic canvas → video; both show the same blocky wordmark,
-          // so the swap reads as the animation continuing rather than a cut
-          gsap.to(v, { opacity: 1, duration: 0.3, ease: "power1.out" });
-          if (canvasRef.current)
-            gsap.to(canvasRef.current, { opacity: 0, duration: 0.35, ease: "power1.in" });
-          gsap.to(hudRef.current, {
-            opacity: 0,
-            duration: 0.45,
-            delay: 0.15,
-            ease: "power2.in",
-          });
-        })
-        .catch(() => {
-          videoFailed = true;
-          runCanvasResolve();
-        });
-    };
-
-    const decide = () => {
-      const v = video;
-      if (!tryVideo || !v || videoFailed) {
-        runCanvasResolve();
-        return;
-      }
-      if (v.readyState >= 3) {
-        runVideo(v);
-        return;
-      }
-      // nearly there: hold the mosaic a beat rather than abandoning the film. The
-      // hold is invisible — the blocky wordmark just sits, same as the designed hold —
-      // and strictly bounded so a dead connection still gets the canvas promptly.
-      // ?intro=video waits long for QA.
-      const grace = q === "video" ? 6000 : v.readyState >= 2 ? 900 : 350;
-      const until = window.setTimeout(() => runCanvasResolve(), grace);
-      v.addEventListener(
-        "canplaythrough",
-        () => {
-          window.clearTimeout(until);
-          runVideo(v); // both paths guard on `settled`, so a late event is harmless
-        },
-        { once: true }
-      );
-    };
-
-    if (variant === "pixel") {
-      drawPixel();
-      if (tryVideo && videoRef.current) {
-        video = videoRef.current;
-        video.preload = "auto";
-        video.load();
-        video.addEventListener("ended", runExit);
-        video.addEventListener("error", () => {
-          videoFailed = true;
-          // a decode error mid-play strands the last good frame; exit rather than hang
-          if (videoStarted) runExit();
-        });
-      }
-      tl.call(decide, undefined, "reveal");
+        .set(plate, { pointerEvents: "none" }, "reveal+=2.6");
     } else {
-      tl.eventCallback("onComplete", finish);
       tl.to(
         hudRef.current,
         { opacity: 0, duration: 0.4, ease: "power2.in" },
@@ -352,7 +363,7 @@ export default function Intro() {
           "reveal+=0.45"
         )
         .to(
-          state,
+          fx,
           { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal },
           "reveal+=0.5"
         )
@@ -391,30 +402,32 @@ export default function Intro() {
     window.addEventListener("resize", onResize);
     window.visualViewport?.addEventListener("resize", onResize);
 
+    // watchdog: a stalled tween must never leave someone on a black locked screen.
+    // Comfortably past the ~5.5s pixel timeline so it only ever fires on a real stall.
+    // (declared as bailEarly above the debug hook so QA can cancel it when frozen)
+    const bail = bailEarly;
+
     /**
      * A tap hurries the intro, it does not skip it. Jumping to the end threw away the
      * whole reveal, so impatience was punished with a black frame and then the page.
-     * Each phase compresses in its own way — the counter snaps to done, a GSAP phase
-     * rescales its remainder to land in HURRY_TO seconds, and the video speeds up —
-     * so every beat still plays, just faster.
+     * Instead the remaining timeline is rescaled to land in HURRY_TO seconds and every
+     * beat still plays, just faster. The scale ramps in over a moment so the tap reads
+     * as the animation responding rather than the frame rate breaking.
      */
+    const HURRY_TO = 1.9;
+    let hurried = false;
+
     const hurry = (e: Event) => {
       if (e instanceof KeyboardEvent && e.key !== "Escape" && e.key !== " ") return;
       if (hurried) return;
+      const remaining = tl.duration() - tl.time();
+      // already inside the target window: let it land on its own rather than stutter
+      if (remaining <= HURRY_TO) return;
       hurried = true;
-      if (video && videoStarted && !settled) {
-        video.playbackRate = 2.6;
-        return;
-      }
-      const t = activeTl;
-      const remaining = t.duration() - t.time();
-      // the counter phase hurries hard so the real content arrives sooner; content
-      // phases keep the HURRY_TO landing that reads as "responding", not "breaking"
-      const target = t === tl ? 0.4 : HURRY_TO;
-      // already inside the window: let it land on its own rather than stutter
-      if (remaining <= target) return;
-      gsap.to(t, {
-        timeScale: remaining / target,
+      // ease the scale in from wherever we are, not from 1, in case anything else
+      // has touched it
+      gsap.to(tl, {
+        timeScale: remaining / HURRY_TO,
         duration: 0.28,
         ease: "power2.out",
         overwrite: true,
@@ -431,14 +444,8 @@ export default function Intro() {
       cancelAnimationFrame(resizeRaf);
       window.removeEventListener("resize", onResize);
       window.visualViewport?.removeEventListener("resize", onResize);
-      if (video) {
-        video.pause();
-        video.removeEventListener("ended", runExit);
-      }
-      for (const t of new Set([tl, activeTl])) {
-        gsap.killTweensOf(t);
-        t.kill();
-      }
+      gsap.killTweensOf(tl);
+      tl.kill();
     };
   }, [mounted, hidden, variant]);
 
@@ -451,21 +458,7 @@ export default function Intro() {
           className="fixed inset-0 z-[100] cursor-pointer bg-[#08090b]"
         >
           {mounted && variant === "pixel" && (
-            <>
-              {/* the generated assembly video, adopted only if it is playable by the
-                  end of the counter — the canvas below is the guaranteed fallback.
-                  Its frames share the plate's #08090b, so `contain` letterboxing on
-                  portrait screens is invisible. */}
-              <video
-                ref={videoRef}
-                src="/intro.mp4"
-                muted
-                playsInline
-                preload="none"
-                className="absolute inset-0 h-full w-full object-contain opacity-0"
-              />
-              <canvas ref={canvasRef} className="h-full w-full" />
-            </>
+            <canvas ref={canvasRef} className="h-full w-full" />
           )}
 
           {mounted && variant === "mask" && (

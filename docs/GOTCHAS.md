@@ -309,6 +309,36 @@ hides the img once the canvas paints. Asserting on `img.complete` therefore repo
 failure for every frame that is working correctly. Assert on what the user sees: read
 pixels from the canvas for frames currently in the viewport.
 
+### One-step canvas downscale made the wordmark vanish from its own mosaic
+
+**Symptom.** The intro's 44px mosaic showed a scatter of ~15 lucky bright cells instead
+of the word. The sharp render from the same source was perfect.
+
+**Cause.** `drawImage` shrinking 1280px straight down to a 29-cell canvas *samples* the
+source with a small filter kernel; it does not average it. Thin glyph strokes fall
+between sample points, so most cells land on background and go dark.
+
+**Fix.** Downscale through a pyramid — halve repeatedly until within 2× of the target,
+then draw the final step. Each halving is a proper 2×2 average, so every stroke
+contributes to its cell. Two reused ping-pong canvases, no per-frame allocation.
+
+**Lesson.** Any big single-step canvas downscale quietly loses thin features. If a
+mosaic, thumbnail or minimap looks "sparser" than its source, suspect sampling first.
+
+### The intro film became procedural, and why
+
+The generated video (two takes, 90 credits) could never open on the actual loading
+frame: the placeholder is composed against the live viewport by the canvas, while a
+film is one fixed aspect ratio — on every screen shape the swap read as a cut to
+obviously-AI footage. The choreography (shimmer, glitch tears, cascade) moved into the
+canvas renderer itself, so the first frame is the placeholder by construction, at every
+window size, with zero network cost. Keep this in mind before reaching for generated
+video where the start or end state must match something the page renders live.
+
+A debugging hook earned its keep here: `?introDebug=1` exposes the GSAP timeline so QA
+can `pause()` it at exact moments — a paused timeline cannot race a slow screenshot,
+where timed captures under software rendering always lose.
+
 ### Chromatic split turned into rainbow confetti
 
 The mosaic resolve pass offset the colour channels without snapping the sample position
