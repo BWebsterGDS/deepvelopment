@@ -297,7 +297,7 @@ export default function Intro() {
     // shared: the loader count
     tl.to(fx, {
       count: 100,
-      duration: variant === "pixel" ? 1.6 : 1.45,
+      duration: variant === "pixel" ? 1.15 : 1.45,
       ease: "power1.inOut",
       onUpdate: writeHud,
     });
@@ -317,28 +317,28 @@ export default function Intro() {
        */
       tl.to(
         fx,
-        { shimmer: 0.5, duration: 1.6, ease: "power1.in", onUpdate: drawPixel },
+        { shimmer: 0.5, duration: 1.15, ease: "power1.in", onUpdate: drawPixel },
         0
       );
 
-      tl.to(fx, { shimmer: 0, duration: 0.45, ease: "power1.out", onUpdate: drawPixel }, "reveal")
-        .to(fx, { glitch: 1, duration: 0.09, ease: "power2.in", onUpdate: drawPixel }, "reveal+=0.55")
-        .to(fx, { glitch: 0, duration: 0.07, onUpdate: drawPixel }, "reveal+=0.64")
-        .to(fx, { glitch: 0.75, duration: 0.06, onUpdate: drawPixel }, "reveal+=0.79")
-        .to(fx, { glitch: 0, duration: 0.09, onUpdate: drawPixel }, "reveal+=0.85")
+      tl.to(fx, { shimmer: 0, duration: 0.32, ease: "power1.out", onUpdate: drawPixel }, "reveal")
+        .to(fx, { glitch: 1, duration: 0.09, ease: "power2.in", onUpdate: drawPixel }, "reveal+=0.40")
+        .to(fx, { glitch: 0, duration: 0.07, onUpdate: drawPixel }, "reveal+=0.49")
+        .to(fx, { glitch: 0.75, duration: 0.06, onUpdate: drawPixel }, "reveal+=0.62")
+        .to(fx, { glitch: 0, duration: 0.09, onUpdate: drawPixel }, "reveal+=0.68")
         .to(
           fx,
-          { block: 1, duration: 1.0, ease: "power3.inOut", onUpdate: drawPixel },
-          "reveal+=0.98"
+          { block: 1, duration: 0.85, ease: "power3.inOut", onUpdate: drawPixel },
+          "reveal+=0.78"
         )
-        .to(hudRef.current, { opacity: 0, duration: 0.45, ease: "power2.in" }, "reveal+=1.65")
-        // ~0.5s of nothing here: the wordmark just sits there, sharp
-        .to(fx, { alpha: 0, duration: 0.6, ease: "power2.in", onUpdate: drawPixel }, "reveal+=2.5")
-        .to(fx, { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal }, "reveal+=2.4")
-        .to(plate, { opacity: 0, duration: 0.65, ease: "power2.inOut" }, "reveal+=2.6")
+        .to(hudRef.current, { opacity: 0, duration: 0.4, ease: "power2.in" }, "reveal+=1.3")
+        // ~0.45s of nothing here: the wordmark just sits there, sharp
+        .to(fx, { alpha: 0, duration: 0.55, ease: "power2.in", onUpdate: drawPixel }, "reveal+=2.08")
+        .to(fx, { p: 1, duration: 1.35, ease: "power2.out", onUpdate: syncReveal }, "reveal+=1.98")
+        .to(plate, { opacity: 0, duration: 0.6, ease: "power2.inOut" }, "reveal+=2.16")
         // the hero un-pixelate outlives the plate fade; stop the invisible plate
         // swallowing clicks in between
-        .set(plate, { pointerEvents: "none" }, "reveal+=2.6");
+        .set(plate, { pointerEvents: "none" }, "reveal+=2.16");
     } else {
       tl.to(
         hudRef.current,
@@ -403,7 +403,7 @@ export default function Intro() {
     window.visualViewport?.addEventListener("resize", onResize);
 
     // watchdog: a stalled tween must never leave someone on a black locked screen.
-    // Comfortably past the ~5.5s pixel timeline so it only ever fires on a real stall.
+    // Comfortably past the ~4.1s pixel timeline so it only ever fires on a real stall.
     // (declared as bailEarly above the debug hook so QA can cancel it when frozen)
     const bail = bailEarly;
 
