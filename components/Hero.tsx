@@ -69,9 +69,10 @@ export default function Hero() {
         {/* portrait stacks these: stats first over the render, cue underneath.
             landscape puts them on one line. Same markup, reordered. */}
         <div className="mt-10 flex flex-col gap-5 sm:mt-0 sm:flex-row sm:items-end sm:justify-between sm:gap-8">
-          {/* the scroll cue is desktop only: on a phone scrolling needs no explaining,
-              and the marker crowded the stat strip at small sizes */}
-          <div className="label order-2 hidden items-center gap-3 sm:order-1 sm:flex">
+          {/* the scroll cue only exists on the full desktop layout — below lg it
+              crowded the stat strip, and scrolling needs no explaining there. lg is
+              the site's single layout-switch breakpoint; this had drifted onto sm. */}
+          <div className="label order-2 hidden items-center gap-3 sm:order-1 lg:flex">
             <span className="relative flex h-8 w-px overflow-hidden bg-[var(--line-strong)]">
               <span className="absolute inset-x-0 top-0 h-3 animate-[drift_2.4s_linear_infinite] bg-acc" />
             </span>

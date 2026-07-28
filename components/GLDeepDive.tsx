@@ -216,8 +216,10 @@ function Knot({
       d.vy *= Math.pow(0.08, step);
       spin.current += (IDLE_SPIN + d.vx) * step;
       tilt.current += d.vy * step;
-      // drift the tilt home once the flick has died away
-      tilt.current += (Math.sin(spin.current * 0.35) * 0.16 - tilt.current) * step * 0.9;
+      // barely-there drift toward the idle sway: strong enough that the model never
+      // freezes at an odd angle forever, weak enough that a placed tilt does not
+      // visibly spring back the moment you let go
+      tilt.current += (Math.sin(spin.current * 0.35) * 0.16 - tilt.current) * step * 0.12;
     }
     d.dx = 0;
     d.dy = 0;
@@ -292,7 +294,13 @@ export default function GLDeepDive() {
     const down = (e: PointerEvent) => {
       if (id !== null) return;
       id = e.pointerId;
-      el.setPointerCapture(e.pointerId);
+      // capture can throw if the pointer is already gone; the window-level up
+      // listeners below are the real safety net either way
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* fall through: window listeners still end the drag */
+      }
       lastX = e.clientX;
       lastY = e.clientY;
       lastT = e.timeStamp;
@@ -329,15 +337,33 @@ export default function GLDeepDive() {
       }
     };
 
+    /**
+     * The drag ends on `window`, not on the box. Pointer capture is best-effort: the
+     * browser can drop it mid-drag (scrolling, leaving the element, focus changes),
+     * and when it does, an element-level pointerup never fires — the model then
+     * sticks to the cursor until a second click. Window-level up/cancel always fire,
+     * and lostpointercapture ends the drag the instant capture is taken away.
+     */
+    const forceEnd = () => {
+      if (id === null) return;
+      id = null;
+      drag.current.dragging = false;
+      drag.current.vx = 0;
+      drag.current.vy = 0;
+    };
     el.addEventListener("pointerdown", down);
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", up);
-    el.addEventListener("pointercancel", up);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    el.addEventListener("lostpointercapture", forceEnd);
+    window.addEventListener("blur", forceEnd);
     return () => {
       el.removeEventListener("pointerdown", down);
-      el.removeEventListener("pointermove", move);
-      el.removeEventListener("pointerup", up);
-      el.removeEventListener("pointercancel", up);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      el.removeEventListener("lostpointercapture", forceEnd);
+      window.removeEventListener("blur", forceEnd);
     };
   }, []);
 
