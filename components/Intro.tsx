@@ -27,6 +27,7 @@ export default function Intro() {
   const plateRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const svgGroupRef = useRef<SVGGElement>(null);
   const counterRef = useRef<HTMLSpanElement>(null);
   const barRef = useRef<HTMLSpanElement>(null);
@@ -187,8 +188,34 @@ export default function Intro() {
       });
     }
 
-    const tl = gsap.timeline({ onComplete: finish });
+    /**
+     * Pixel variant, when the network cooperates: a generated video plays the
+     * assembly — blocks swarming into the wordmark — instead of the canvas
+     * resolve. The canvas path is the guaranteed fallback: the video gets until
+     * the end of the counter to become playable, and any failure at any point
+     * falls back or exits cleanly, so nobody ever waits on an mp4.
+     * `?intro=pixel` forces the canvas path; `?intro=video` waits for the file
+     * (QA only). Data-saver connections never fetch it at all.
+     */
+    const q = new URLSearchParams(window.location.search).get("intro");
+    const saveData =
+      (navigator as { connection?: { saveData?: boolean } }).connection?.saveData === true;
+    const tryVideo = variant === "pixel" && q !== "pixel" && !saveData;
+    let videoFailed = false;
+    let videoStarted = false;
+    let settled = false; // exactly one path runs: video exit, canvas resolve, or bail
+
+    const HURRY_TO = 1.9;
+    let hurried = false;
+    let video: HTMLVideoElement | null = null;
+
+    // watchdog: a stalled tween must never leave someone on a black locked screen.
+    // Reassigned with more headroom if the video path is adopted.
+    let bail = window.setTimeout(finish, 9500);
+
+    const tl = gsap.timeline();
     tlRef.current = tl;
+    let activeTl: gsap.core.Timeline = tl;
 
     // shared: the loader count
     tl.to(state, {
@@ -202,45 +229,106 @@ export default function Intro() {
     // would run the reveal on top of the loader instead of after it
     tl.addLabel("reveal");
 
-    if (variant === "pixel") {
+    /** shared tail: hero un-pixelates while the plate fades out over it */
+    const runExit = () => {
+      if (settled) return;
+      settled = true;
+      const ex = gsap.timeline({ onComplete: finish });
+      activeTl = ex;
+      ex.to(state, { p: 1, duration: 1.4, ease: "power2.out", onUpdate: syncReveal }, 0)
+        .to(plate, { opacity: 0, duration: 0.6, ease: "power2.inOut" }, 0.15)
+        .set(plate, { pointerEvents: "none" }, 0.15);
+      if (hurried) ex.timeScale(1.5);
+    };
+
+    const runCanvasResolve = () => {
+      if (settled) return;
+      settled = true;
       drawPixel();
       // resolve → HOLD sharp → dissolve. Without the hold the wordmark was still
       // sharpening when the fade started, so it was never actually seen resolved.
-      tl.to(
-        state,
-        {
-          block: 1,
-          duration: 1.05,
-          ease: "expo.out",
-          onUpdate: drawPixel,
-        },
-        "reveal"
-      )
-        .to(
-          hudRef.current,
-          { opacity: 0, duration: 0.45, ease: "power2.in" },
-          "reveal+=1.35"
-        )
-        // 0.8s of nothing here: the wordmark just sits there, sharp
-        .to(
-          state,
-          { alpha: 0, duration: 0.7, ease: "power2.in", onUpdate: drawPixel },
-          "reveal+=1.85"
-        )
-        .to(
-          state,
-          { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal },
-          "reveal+=1.75"
-        )
-        .to(
-          plate,
-          { opacity: 0, duration: 0.65, ease: "power2.inOut" },
-          "reveal+=1.95"
-        )
+      const c = gsap.timeline({ onComplete: finish });
+      activeTl = c;
+      c.to(state, { block: 1, duration: 1.05, ease: "expo.out", onUpdate: drawPixel }, 0)
+        .to(hudRef.current, { opacity: 0, duration: 0.45, ease: "power2.in" }, 1.35)
+        // 0.8s of nothing in between: the wordmark just sits there, sharp
+        .to(state, { alpha: 0, duration: 0.7, ease: "power2.in", onUpdate: drawPixel }, 1.85)
+        .to(state, { p: 1, duration: 1.5, ease: "power2.out", onUpdate: syncReveal }, 1.75)
+        .to(plate, { opacity: 0, duration: 0.65, ease: "power2.inOut" }, 1.95)
         // the hero un-pixelate outlives the plate fade; stop the invisible plate
         // swallowing clicks in between
-        .set(plate, { pointerEvents: "none" }, "reveal+=1.95");
+        .set(plate, { pointerEvents: "none" }, 1.95);
+      if (hurried) c.timeScale(Math.max(1, c.duration() / HURRY_TO));
+    };
+
+    const runVideo = (v: HTMLVideoElement) => {
+      if (settled) return;
+      window.clearTimeout(bail);
+      bail = window.setTimeout(finish, 12000);
+      v.playbackRate = hurried ? 2.6 : 1;
+      v.play()
+        .then(() => {
+          videoStarted = true;
+          // crossfade mosaic canvas → video; both show the same blocky wordmark,
+          // so the swap reads as the animation continuing rather than a cut
+          gsap.to(v, { opacity: 1, duration: 0.3, ease: "power1.out" });
+          if (canvasRef.current)
+            gsap.to(canvasRef.current, { opacity: 0, duration: 0.35, ease: "power1.in" });
+          gsap.to(hudRef.current, {
+            opacity: 0,
+            duration: 0.45,
+            delay: 0.15,
+            ease: "power2.in",
+          });
+        })
+        .catch(() => {
+          videoFailed = true;
+          runCanvasResolve();
+        });
+    };
+
+    const decide = () => {
+      const v = video;
+      if (!tryVideo || !v || videoFailed) {
+        runCanvasResolve();
+        return;
+      }
+      if (v.readyState >= 3) {
+        runVideo(v);
+        return;
+      }
+      // nearly there: hold the mosaic a beat rather than abandoning the film. The
+      // hold is invisible — the blocky wordmark just sits, same as the designed hold —
+      // and strictly bounded so a dead connection still gets the canvas promptly.
+      // ?intro=video waits long for QA.
+      const grace = q === "video" ? 6000 : v.readyState >= 2 ? 900 : 350;
+      const until = window.setTimeout(() => runCanvasResolve(), grace);
+      v.addEventListener(
+        "canplaythrough",
+        () => {
+          window.clearTimeout(until);
+          runVideo(v); // both paths guard on `settled`, so a late event is harmless
+        },
+        { once: true }
+      );
+    };
+
+    if (variant === "pixel") {
+      drawPixel();
+      if (tryVideo && videoRef.current) {
+        video = videoRef.current;
+        video.preload = "auto";
+        video.load();
+        video.addEventListener("ended", runExit);
+        video.addEventListener("error", () => {
+          videoFailed = true;
+          // a decode error mid-play strands the last good frame; exit rather than hang
+          if (videoStarted) runExit();
+        });
+      }
+      tl.call(decide, undefined, "reveal");
     } else {
+      tl.eventCallback("onComplete", finish);
       tl.to(
         hudRef.current,
         { opacity: 0, duration: 0.4, ease: "power2.in" },
@@ -303,31 +391,30 @@ export default function Intro() {
     window.addEventListener("resize", onResize);
     window.visualViewport?.addEventListener("resize", onResize);
 
-    // watchdog: a stalled tween must never leave someone on a black locked screen.
-    // Comfortably past the ~4.2s pixel timeline so it only ever fires on a real stall.
-    const bail = window.setTimeout(finish, 9500);
-
     /**
      * A tap hurries the intro, it does not skip it. Jumping to the end threw away the
      * whole reveal, so impatience was punished with a black frame and then the page.
-     * Instead the remaining timeline is rescaled to land in HURRY_TO seconds and every
-     * beat still plays, just faster. The scale ramps in over a moment so the tap reads
-     * as the animation responding rather than the frame rate breaking.
+     * Each phase compresses in its own way — the counter snaps to done, a GSAP phase
+     * rescales its remainder to land in HURRY_TO seconds, and the video speeds up —
+     * so every beat still plays, just faster.
      */
-    const HURRY_TO = 1.9;
-    let hurried = false;
-
     const hurry = (e: Event) => {
       if (e instanceof KeyboardEvent && e.key !== "Escape" && e.key !== " ") return;
       if (hurried) return;
-      const remaining = tl.duration() - tl.time();
-      // already inside the target window: let it land on its own rather than stutter
-      if (remaining <= HURRY_TO) return;
       hurried = true;
-      // ease the scale in from wherever we are, not from 1, in case anything else
-      // has touched it
-      gsap.to(tl, {
-        timeScale: remaining / HURRY_TO,
+      if (video && videoStarted && !settled) {
+        video.playbackRate = 2.6;
+        return;
+      }
+      const t = activeTl;
+      const remaining = t.duration() - t.time();
+      // the counter phase hurries hard so the real content arrives sooner; content
+      // phases keep the HURRY_TO landing that reads as "responding", not "breaking"
+      const target = t === tl ? 0.4 : HURRY_TO;
+      // already inside the window: let it land on its own rather than stutter
+      if (remaining <= target) return;
+      gsap.to(t, {
+        timeScale: remaining / target,
         duration: 0.28,
         ease: "power2.out",
         overwrite: true,
@@ -344,8 +431,14 @@ export default function Intro() {
       cancelAnimationFrame(resizeRaf);
       window.removeEventListener("resize", onResize);
       window.visualViewport?.removeEventListener("resize", onResize);
-      gsap.killTweensOf(tl);
-      tl.kill();
+      if (video) {
+        video.pause();
+        video.removeEventListener("ended", runExit);
+      }
+      for (const t of new Set([tl, activeTl])) {
+        gsap.killTweensOf(t);
+        t.kill();
+      }
     };
   }, [mounted, hidden, variant]);
 
@@ -358,7 +451,21 @@ export default function Intro() {
           className="fixed inset-0 z-[100] cursor-pointer bg-[#08090b]"
         >
           {mounted && variant === "pixel" && (
-            <canvas ref={canvasRef} className="h-full w-full" />
+            <>
+              {/* the generated assembly video, adopted only if it is playable by the
+                  end of the counter — the canvas below is the guaranteed fallback.
+                  Its frames share the plate's #08090b, so `contain` letterboxing on
+                  portrait screens is invisible. */}
+              <video
+                ref={videoRef}
+                src="/intro.mp4"
+                muted
+                playsInline
+                preload="none"
+                className="absolute inset-0 h-full w-full object-contain opacity-0"
+              />
+              <canvas ref={canvasRef} className="h-full w-full" />
+            </>
           )}
 
           {mounted && variant === "mask" && (

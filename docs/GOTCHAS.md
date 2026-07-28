@@ -491,6 +491,19 @@ causes, both in the test.
 Chase intermittent failures to a root cause before shipping around them. Both of these
 would have quietly eroded trust in every other number the suite produced.
 
+### A video intro must lose the race gracefully
+
+The generated intro video replaces the canvas resolve only when the browser can
+actually play it. Three things made that safe rather than hopeful:
+
+- **Decision at a fixed point, with a bounded grace.** The mp4 gets until the end of the counter, plus 900ms if it is nearly ready (`readyState >= 2`), and the mosaic simply holds during the grace, which reads identically to the designed hold. A dead connection reaches the canvas path in at most 350ms extra.
+- **The canvas path never left the code.** Slow network, data-saver, decode error before or during playback, autoplay refusal — every failure lands on the same canvas animation or the shared exit. Nobody waits on a file.
+- **Wall-clock video assertions lie in software rendering.** Swiftshader decodes 1080p slower than realtime, so "the video should finish in ~5s" fails in CI while being fine on any real device. Assert on state transitions (adopted → plate gone), not on durations, and keep a generous watchdog (12s here) as the floor.
+
+Also: `fract(uTime)`-style start/end frames are the whole trick. Video models garble
+invented text, so the wordmark was rendered exactly (same fonts as the site) and pinned
+as the generation's first and last frames — the model only animates the journey.
+
 ## 9. Copy
 
 The site was written with the standard AI tells throughout: an em dash in nearly every
