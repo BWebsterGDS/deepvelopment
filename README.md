@@ -1,5 +1,10 @@
 # Deepvelopment
 
+> **Editing this? Start with [`READFIRST.md`](READFIRST.md).** It is the contract:
+> the hard rules, the 3D rules, the copy voice, and how to run the QA suite before
+> you call anything done. The war stories behind every rule are in
+> [`docs/GOTCHAS.md`](docs/GOTCHAS.md).
+
 Company site. Next 16 (App Router, Turbopack) · React 19 · Tailwind 4 · GSAP + ScrollTrigger · Lenis · three.js + R3F.
 
 ```bash

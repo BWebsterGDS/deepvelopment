@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "qa": "node scripts/qa/audit.js",
+    "qa:widths": "node scripts/qa/widths.js",
+    "qa:intro": "node scripts/qa/intro.js"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.7",
@@ -28,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "playwright": "^1.50.0"
   }
 }
