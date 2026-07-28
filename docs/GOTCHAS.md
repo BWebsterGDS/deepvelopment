@@ -75,6 +75,30 @@ render canvas were positioned against the old sticky element. `position: sticky`
 as positioned, so they kept working here, but check any `absolute` descendant after you
 restructure a column.
 
+### A fixed-height card clips its own content, silently
+
+**Symptom.** The AI card's stack chips were missing entirely. The card just looked like
+it ended there, so nothing read as broken.
+
+**Cause.** Rail articles are `lg:h-[76vh]` with `overflow-hidden`. Ten long bullets
+pushed the chips past the bottom edge. There is no warning of any kind, and the same
+thing happened twice more as content grew.
+
+**Fix.** Condense the bullets, and add an audit assertion that every card's chips sit
+inside the card's rect. That assertion immediately caught Real-time 3D overflowing by
+14px after the Unreal bullets went in, and later caught the new crypto card 30px over
+before anyone saw it.
+
+**Lesson.** Fixed height plus `overflow-hidden` turns content growth into silent
+clipping. Any such container needs a bounds assertion in QA, because the failure mode is
+invisible by construction.
+
+### A component that sets its own positioning defeats caller classes
+
+`PixelImage` owns `position: relative`, so passing `absolute` classes to an instance
+collapsed the metrics band it was supposed to overlay. Check what a component claims for
+itself before styling it from outside.
+
 ---
 
 ## 3. Transforms and animation
@@ -213,6 +237,76 @@ The intro plate faded to `opacity: 0` but stayed in the hit-testing tree for the
 the timeline. Set `pointer-events: none` at the moment the fade completes, not at the end
 of the timeline.
 
+### Black letters on a black plate
+
+**Symptom.** The mask deployment appeared to load nothing at all: black screen for the
+entire intro.
+
+**Cause.** The mask intro cuts letter-shaped holes in a black plate, and the holes
+revealed the hero underneath, which at that moment is a near-black, heavily pixelated
+frame. Structurally correct, visually nothing.
+
+**Fix.** A lit surface (chrome radial plus cyan sweep) under the plate, so the wordmark
+reads as glowing type from frame one, cross-fading out mid scale-through so the holes
+open onto the hero. This is also what motivated the watchdog: a stalled intro must never
+strand a visitor on a black screen with scroll locked.
+
+**Lesson.** Any reveal-through-holes effect is invisible when the reveal target matches
+the plate colour. Check the revealed layer's state at the moment of reveal, not at rest.
+
+### A tap skipped the intro instead of hurrying it
+
+**Symptom.** Tapping the loading screen jumped straight to the page. The brief was the
+whole animation, just faster.
+
+**Cause.** The tap handler called `tl.progress(0.98)`, a hard jump that discards every
+remaining beat.
+
+**Fix.** Rescale the remainder with `timeScale` so everything still plays. Any tap
+before ~2.95s lands the remaining timeline at exactly 1.90s (tap at 0.2s → ×2.45, at
+1.6s → ×1.71); later taps finish naturally, and a second tap is guarded so speed-ups
+cannot compound.
+
+**Verifying it:** wall-clock timing under software rendering could not measure this — a
+"failing" double-tap run had simply tapped 0.7s later. The proof was running the GSAP
+arithmetic in Node and printing the numbers.
+
+### The second route was permanently scroll-locked
+
+**Symptom.** Loading `/start` directly gave a page that could never scroll, with the
+home page's intro and section nav rendered over the form.
+
+**Cause.** `SmoothScroll` stops the scroller and only releases it when the intro
+finishes. The intro only exists on the home route, so nothing ever unlocked a subroute.
+
+**Fix.** Gate the intro, the section nav and the scroll lock through `SiteChrome`, which
+only mounts them on `/`. CTAs use `next/link` so a client-side return does not replay
+the intro.
+
+**Lesson.** Anything global that participates in the intro handshake must be re-audited
+the moment a second route exists.
+
+### An idle sway erased a placed tilt
+
+**Symptom.** Horizontal spin kept its inertia after a drag, but a vertical tilt sprang
+back home the moment you released.
+
+**Cause.** The idle-sway lerp pulled tilt toward `sin(spin)` at `0.9` per-second
+strength, about 60%/sec, which overwrote the user's placement within a second.
+
+**Fix.** `0.12` (~7%/sec). A placed tilt now stays put and only drifts back into the
+idle sway over many seconds.
+
+**Lesson.** This is the two-systems-fighting bug in miniature, and it recurs every time
+an idle animation and user input share an axis. The idle term must be near-silent
+relative to input.
+
+### Stacked opacities multiply into invisibility
+
+The SignalFill dots were `rgba(255,255,255,0.05)` inside a layer whose own opacity
+dipped to `0.13`, about 0.6% contrast on `#0a0c0f`. Check the product of stacked
+opacities, not each one in isolation.
+
 ---
 
 ## 4. Canvas and WebGL
@@ -335,9 +429,12 @@ canvas renderer itself, so the first frame is the placeholder by construction, a
 window size, with zero network cost. Keep this in mind before reaching for generated
 video where the start or end state must match something the page renders live.
 
-A debugging hook earned its keep here: `?introDebug=1` exposes the GSAP timeline so QA
-can `pause()` it at exact moments — a paused timeline cannot race a slow screenshot,
-where timed captures under software rendering always lose.
+A debugging hook earned its keep here: `?introDebug=1` exposes the GSAP timeline as
+`window.__introTl` so QA can `pause()` it at exact moments — a paused timeline cannot
+race a slow screenshot, where timed captures under software rendering always lose. The
+non-obvious part: the hook must also disarm the watchdog with `clearTimeout`, or the
+9.5s failsafe `finish()`es the deliberately paused timeline mid-capture and the QA
+session tears itself down.
 
 ### Chromatic split turned into rainbow confetti
 
@@ -356,6 +453,49 @@ default. Resolve the custom property through `getComputedStyle` first, and redra
 Cap the device pixel ratio on small viewports. 1.4 was the point where the mosaic still
 read clean and the GPU stopped throttling. Two live WebGL contexts on one page also need
 gating, so both are driven by an IntersectionObserver.
+
+### The drag snapped back because two systems owned the rotation
+
+**Symptom.** Dragging the deep-dive model, it spun back to where it started the moment
+you let go.
+
+**Cause.** OrbitControls orbited the *camera* while `useFrame` simultaneously lerped the
+*group* toward a scroll-derived rotation at roughly 99.9%/sec. Proven numerically: 98.9%
+of a 1.5 rad drag was erased within one second of release.
+
+**Fix.** Remove OrbitControls entirely. Pointer drag accumulates spin and tilt directly,
+with inertia: velocity decays by `Math.pow(0.08, step)` per second, idle drift takes
+over below `IDLE_SPIN 0.16`, and `touch-action: pan-y` keeps vertical swipes scrolling
+the page. Measured coast after a flick: 4.86 → 1.32 → 0.37 → 0.13 rad/s, settling into
+the idle drift.
+
+**Lesson.** User input and an automated animation can share an object only if one of
+them is authoritative. A lerp toward a computed target will always erase a drag.
+
+### The model stuck to the cursor after release
+
+**Symptom.** After some drags the knot kept following the cursor with the button up,
+until a second click freed it.
+
+**Cause.** Pointer capture is best-effort. The browser can silently drop it mid-drag
+(scrolling, leaving the element, focus changes), and then an *element-level* `pointerup`
+never arrives, so the drag never ends.
+
+**Fix.** `pointerdown` on the element; `pointermove`, `pointerup` and `pointercancel`
+on `window`; `lostpointercapture` on the element and `blur` on `window` both call a
+`forceEnd()` that zeroes velocity and clears the drag, guarded by an early return when
+no drag is live. `setPointerCapture` itself goes in a try/catch.
+
+**The ordering nuance that preserves fling:** on a normal release `pointerup` fires
+*before* `lostpointercapture`, so the regular handler (which keeps the flick velocity)
+runs first and marks the drag over; `forceEnd` then no-ops. `forceEnd` only wins, and
+kills velocity, when capture is genuinely torn away with no release event.
+
+### Two darkening systems compounded into a murky blob
+
+The `/start` backdrop object vanished into fog: density 0.055 at camera distance 7.4,
+under a 0.86 scrim. Each looked reasonable alone. Same class as the multiplied
+opacities entry — audit darkening effects as a product, not one at a time.
 
 ---
 
@@ -449,6 +589,39 @@ menu rows 39px. `-my-2 py-2` grows a hit area without moving anything.
 - Six full-height cards stacked to roughly 7000px of scrolling on a phone. Collapsed rows put all of them on one screen.
 - Two layouts rendering the same data both carried `id={s.id}`, so the document had duplicate ids and anchors resolved to the hidden one.
 - Long labels never fit two across at 390px. Let them become full-width rows instead of pretending to be chips.
+- iOS gates `deviceorientation` behind a user-gesture permission prompt. The site deliberately ships Android tilt plus iOS pointer-drag instead of prompting.
+
+### Every footer discipline chip landed on the same card
+
+**Symptom.** All eight contact chips scrolled to the same place. After the first fix,
+always to the *last* card instead.
+
+**Four stacked causes, each masking the next:**
+
+1. Every chip in the `.map` was hardcoded `href="#capabilities"`.
+2. Fixing the href cannot work on desktop anyway: the rail is horizontally pinned, so a
+   card's position is a transform, and a plain anchor has nothing to target. Card index
+   has to map to a scroll offset.
+3. Measuring the section's rect to find the rail start returns the pin's *end* (the pin
+   spacer) once you are past it, and the footer is past it, so every chip resolved to
+   the last card. Use the ScrollTrigger's own `st.start`.
+4. It *still* failed identically: `SmoothScroll`'s document-level anchor handler saw the
+   residual `href` and scrolled there right after the chip's own handler ran, winning.
+   Chips now `stopPropagation()` and carry `data-dv-service`, which the global handler
+   explicitly skips.
+
+**Lesson.** A document-level anchor handler is a second scroller that silently overrides
+any custom scroll. Give bespoke handlers an opt-out attribute the global one respects.
+And when a fix changes nothing, suspect a later handler re-doing the old behaviour
+rather than the fix being wrong.
+
+### The scroll cue came back at mid widths
+
+The hero's scroll cue had been hidden below `sm` (640px) instead of below `lg` (1024px),
+so the 640–1024px band, exactly where every "it looks wrong on my window" report comes
+from, still showed it. The single-breakpoint rule erodes one utility class at a time;
+when a mid-width report arrives, grep for stray `sm:`/`md:` layout switches before
+debugging anything else.
 
 ---
 
@@ -458,6 +631,10 @@ menu rows 39px. `-my-2 py-2` grows a hit area without moving anything.
 - **Both URLs returned 302.** Deployment Protection (SSO) is on by default on this team. `{"ssoProtection": null}` makes a project public, which is a decision to confirm with the owner first.
 - **An env var was set to an empty string.** `printf 'pixel' | vercel env add …` stores nothing useful. Use `--value pixel --no-sensitive -y` and confirm with `vercel env pull`.
 - **Deploying two projects from one directory.** `.vercel/project.json` holds the link, so `vercel link --yes --project <name>` between deploys is what switches target. Link back afterwards or the next deploy goes to the wrong project.
+- **"The fix made no difference" can mean the deploy went to Preview.** `vercel deploy` without `--prod` leaves the public URL serving the old code, and every re-test faithfully reproduces the bug you already fixed. Check which deployment the alias points at before re-opening the code. (Learned on an adjacent build, twice in one session.)
+- **In-memory storage on Vercel is impossible, not just fragile.** Functions are stateless; a module-level array is gone by the next request. There is no quick-fix version of this, the data needs a store.
+- **Vercel Blob is `access: "public"` by default.** Anyone with the URL can read it. The enquiry payloads are real names and emails, so the store is created with `access: "private"`, verified by an anonymous fetch returning 403. Also: `vercel blob store add` wants a TTY for its link prompt; `--yes` at creation is what actually connects the store and injects `BLOB_READ_WRITE_TOKEN`. The action writes to the store *first* and treats that as success, so a mail failure can never lose the record.
+- **`robots.txt` and `sitemap.xml` were 404.** Next scaffolds neither. `app/robots.ts` and `app/sitemap.ts`, found only because the wider audit checked.
 
 ---
 
@@ -483,6 +660,12 @@ This is the section that saved the most time overall.
 - **`next lint --dir` was removed in Next 16.** Use `eslint` directly.
 - **Prettier's default print width is 80**, which is narrower than this repo's roughly 88. Running it without `--print-width` reformats whole files and buries the real change.
 - **Higgsfield `job_status` takes `jobId`**, not `job_id`.
+- **`gl.readPixels` on the R3F canvas returns zeros.** The drawing buffer is not preserved (`preserveDrawingBuffer: false` is the default), so reading outside the frame gives nothing even mid-animation. Prove motion models in Node instead of reading GL pixels. In the same pass, a bare `querySelector("canvas")` matched a `PixelImage` 2D canvas, not the WebGL one — scope the selector.
+- **React 19 hoists a `<link rel="preload">` written in JSX into `<head>`**, so the fetch starts with the HTML rather than after hydration. That is the mechanism for any hero asset that must beat hydration. (Used for the intro film, retired with it; the fact survives in the commit history.)
+- **A NUL byte got written into a source file, and the confirming grep lied.** Three Edits failed on text visibly in the file because an earlier write produced `.replace(/\0/g, "")` with a literal NUL inside the regex. The check `grep $'\0'` then matched all 106 lines: zsh collapses `$'\0'` to an empty pattern. Scan for NUL at the byte level (python), never through the shell.
+- **zsh aborts a whole compound command on an empty glob.** `no matches found: shots/fm-phone-*.png` killed every step chained after it. `setopt null_glob`, `find`, or guard the glob.
+- **Heredoc string edits fail on invisible whitespace.** `assert old in s` before a python patch aborted repeatedly because JSX indentation differed from what was quoted. Safe, but each miss is a round trip: re-read the exact bytes first.
+- **Phone-DPR frozen-frame captures never complete under swiftshader.** Screenshot runs at `deviceScaleFactor: 2` hit a ten-minute timeout; even trimmed to phone size at 1× they never produced a file. Below roughly desktop size, stop screenshotting and assert geometry (backing-store vs CSS-box aspect to three decimals), which is the stronger check anyway.
 
 ---
 
@@ -521,6 +704,23 @@ causes, both in the test.
 Chase intermittent failures to a root cause before shipping around them. Both of these
 would have quietly eroded trust in every other number the suite produced.
 
+### The signature of a programmatic-scroll race
+
+One FAIL in a 65-assertion run: "pixel cross-fade advances with scroll
+0.610 -> 0.610 -> 0.610", which looks exactly like the frozen `view()` timeline bug
+returning. Two re-runs passed with the expected `0.610 -> 0.229 -> 0.218`. A
+scroll-sampled value frozen at its *first* reading is what a race between the test's
+programmatic scroll and Lenis looks like — distinct from the stale-deploy case above,
+and another reason to re-run once before touching code.
+
+### The audit was stricter than the spec
+
+WCAG 2.5.8 exempts inline links from the 24px target rule. Without the exemption the
+tap-target audit fails every correct prose link, in both suites. Read the spec's
+exceptions before encoding the headline number. The card-bounds metric had its own bug
+too, counting chips as bullets and reporting 15–21 per card. An audit is code and gets
+the same review as code.
+
 ### A video intro must lose the race gracefully
 
 The generated intro video replaces the canvas resolve only when the browser can
@@ -555,6 +755,27 @@ inconsistent with everything around it.
 
 ---
 
+## 10. From adjacent builds
+
+Traps hit on neighbouring projects in the same period. Different repos, same classes of
+bug — recorded here because they will transfer straight into this one.
+
+### Scroll engines
+
+- **`scroll-behavior: smooth` in global CSS silently breaks per-frame `window.scrollTo`.** Every call becomes a cancelled smooth animation, so a scroll-driven engine reads as completely dead. Set `auto`, or pass `behavior: "instant"` per call. Check this first on any Lenis or scrub build that "does nothing".
+- **IntersectionObserver misses reveals on instant scroll jumps** — exactly what iOS momentum and anchor jumps produce — leaving content permanently clipped at its hidden state. A sweep on the scroll tick cannot silently fail; IO alone can.
+
+### Generated video (Seedance / Higgsfield)
+
+- **`start_image` is weak conditioning, not a frame lock.** Passing the same frame as both `start_image` and `end_image` came back visibly different (SSIM 0.462 against the seed), killing a clip-to-loop handoff. The free fix: harvest the loop from the clip's *own* static tail — handoff 0.955, seam 0.974 against a 0.985 adjacent-frame baseline. Film grain means 0.985, not 1.0, is "seamless".
+- **A `end_image = start_image` loop still pops at the seam** (0.949: steam and flame mismatch). A 0.6s tail-into-head crossfade reaches the baseline.
+- **Models hallucinate real brands.** One restrained hero shot generated a genuine Laurent-Perrier label. Every generated clip needs a brand-mark audit before it ships.
+- **Vague depletion prompts skip to the end state.** "Hands lift several skewers away" emptied the board by a third of the clip, caught only by a dense 1fps full-frame audit — sampled review hid it. Prompt with explicit counts and hard negatives.
+- **Grain dominates bitrate; CRF barely helps and AV1 encoded *larger* than H.264** on this content. Light `hqdn3d` denoise plus a resolution step cut 8.2MB to 3.5MB at SSIM 0.943.
+- **Autoplay is a minefield:** sources attached from JS never re-arm the `autoplay` attribute; set `muted` as a property and retry `play()` on `loadeddata`. A second `<video>` needs user activation even muted, and a devtools evaluation *counts* as activation, producing a false manual pass. A hidden tab never fetches media at all (`readyState` stays 0), and macOS occlusion can mark a visible-looking window hidden — guard retry loops on `document.hidden`.
+
+---
+
 ## Pre-ship checklist
 
 Distilled from the above. Each line exists because it was missed once.
@@ -583,3 +804,8 @@ Distilled from the above. Each line exists because it was missed once.
 - [ ] Damping and easing expressed per second, never per frame
 - [ ] favicon, `opengraph-image` and `metadataBase` are yours, not the starter's
 - [ ] Child route titles are bare page names when a title template is set
+- [ ] Fixed-height `overflow-hidden` containers have a bounds assertion in QA
+- [ ] No stray `sm:`/`md:` layout switches — grep for them, 1024px is the only breakpoint
+- [ ] Custom scroll handlers carry an opt-out the global anchor handler respects
+- [ ] User-draggable objects end their drag on `window`-level events, not element-level
+- [ ] Every route checked against the intro/scroll-lock handshake, not just `/`

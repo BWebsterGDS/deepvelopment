@@ -9,9 +9,9 @@ linked machine, through the Vercel CLI. Clone it, break it, experiment freely.
 This file is the contract. It exists because most of what is fragile in this codebase
 is invisible: the site looks simple and is full of load-bearing decisions. Every rule
 below was paid for with a real bug, and the receipts are in
-[`docs/GOTCHAS.md`](docs/GOTCHAS.md) — 36 of them, symptom → cause → fix. Read that
-file the moment something behaves strangely, and add to it when a diagnosis costs you
-more than twenty minutes.
+[`docs/GOTCHAS.md`](docs/GOTCHAS.md) — sixty-odd of them, symptom → cause → fix. Read
+that file the moment something behaves strangely, and add to it when a diagnosis costs
+you more than twenty minutes.
 
 ```bash
 npm install
@@ -152,6 +152,14 @@ Rules, in rough order of how expensive they are to relearn:
 - **HeroCanvas is welded to the home route.** It reads `reveal.*`, which only the
   intro writes — mounted anywhere else it renders permanently pixelated. That is why
   `StartCanvas` exists. New page wanting 3D? Copy `StartCanvas`, not `HeroCanvas`.
+- **Adding a new 3D object? Author it wherever you like (Spline, Blender), export
+  glTF/GLB, load it with `useGLTF` inside one of the existing R3F scenes.** Do NOT
+  embed the Spline runtime or an iframe: `@splinetool/runtime` is ~2MB before any
+  scene loads, it brings its own orbit controls (the exact two-systems-fighting bug
+  the drag code exists to prevent), and it cannot pass through the mosaic
+  render-target pipeline that gives the site its look. Spline is a fine modelling
+  tool and a forbidden renderer here. Keep exported GLBs small (<500KB, Draco if
+  needed) and local — no CDN fetches, same as environments.
 - **The site advertises its own budgets** — 60fps on mid-range hardware, <150 draw
   calls, honest live counters. Whatever you add has to live inside the claim. If your
   scene needs more, the copy changes with it or the scene slims down.
