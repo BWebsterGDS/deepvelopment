@@ -1,26 +1,405 @@
 @import "tailwindcss";
 
+@theme {
+  --color-void: #08090b;
+  --color-void-2: #0c0e12;
+  --color-ink: #f4f6f8;
+  --color-mute: #78838e;
+  --color-acc: #4de3ff;
+  --color-acc-dim: #1c6d80;
+  --color-warn: #ff6a3d;
+
+  --font-display: var(--font-dv-display), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-dv-body), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-dv-mono), ui-monospace, monospace;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --shell: clamp(1.25rem, 4vw, 5rem);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+* {
+  min-width: 0;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: #08090b;
+  /* lenis drives scrolling; never let the browser smooth-scroll on top of it */
+  scroll-behavior: auto;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #08090b;
+  color: #f4f6f8;
+  font-family: var(--font-sans);
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+  /* the grey flash Safari paints on every tap fights every transition we author */
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: #4de3ff;
+  color: #05070a;
+}
+
+/* ---------- type ----------
+   These live in @layer components on purpose. Unlayered rules beat every Tailwind
+   utility regardless of order, so an unlayered .label silently swallowed the colour,
+   case and tracking utilities set alongside it — `label text-acc` rendered grey.
+   Inside the layer, utilities win, which is what every call site already assumes. */
+
+@layer components {
+  .display {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 0.95;
+    text-wrap: balance;
+  }
+
+  /* squared, wide, machine-set — used for every label, counter and stat */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #78838e;
+  }
+
+  /* numerals and short technical strings that want the display face, not the body */
+  .techno {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chrome {
+    background: linear-gradient(
+      172deg,
+      #ffffff 0%,
+      #c9d4dd 26%,
+      #6f7d8a 44%,
+      #eef4f8 58%,
+      #93a2ae 76%,
+      #ffffff 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ---------- buttons ----------
+   One shape, two weights. The fill is a ::before at z-index -1, which paints above
+   the button's own background but below its text, so no wrapper spans are needed.
+   :active mirrors :hover because a phone never fires hover — the fill IS the tap
+   feedback there. */
+
+@layer components {
+  .btn {
+    position: relative;
+    isolation: isolate;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.65rem;
+    min-height: 3.125rem;
+    padding-inline: 1.5rem;
+    /* the fill parks at translateY(101%); without this it shows below the border */
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    line-height: 1;
+    border: 1px solid var(--line-strong);
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.05),
+      rgba(255, 255, 255, 0)
+    );
+    color: #f4f6f8;
+    text-align: center;
+    transition:
+      color 300ms ease,
+      border-color 300ms ease,
+      box-shadow 300ms ease,
+      transform 140ms ease;
+  }
+
+  .btn::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: var(--btn-fill, rgba(255, 255, 255, 0.08));
+    transform: translate3d(0, 101%, 0);
+    transition: transform 550ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .btn:hover::before,
+  .btn:active::before {
+    transform: none;
+  }
+
+  .btn:active {
+    transform: scale(0.985);
+  }
+
+  /* the arrow leans into the direction of travel on hover */
+  .btn-arrow {
+    transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .btn:hover .btn-arrow {
+    transform: translateX(3px);
+  }
+
+  .btn-primary {
+    --btn-fill: #4de3ff;
+    border-color: rgba(77, 227, 255, 0.55);
+    color: #4de3ff;
+  }
+  .btn-primary:hover,
+  .btn-primary:active {
+    color: #05070a;
+    border-color: #4de3ff;
+    box-shadow: 0 14px 44px -18px rgba(77, 227, 255, 0.75);
+  }
+
+  .btn-ghost:hover,
+  .btn-ghost:active {
+    border-color: rgba(244, 246, 248, 0.4);
+  }
+
+  /* nav-scale: mono voice, shorter, so it sits inside a 64px header */
+  .btn-sm {
+    min-height: 2.5rem;
+    padding-inline: 1.1rem;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    gap: 0.5rem;
+  }
+}
+
+/* ---------- surfaces ---------- */
+
+.hair {
+  border: 1px solid var(--line);
+}
+.hair-t {
+  border-top: 1px solid var(--line);
+}
+.hair-b {
+  border-bottom: 1px solid var(--line);
+}
+.hair-l {
+  border-left: 1px solid var(--line);
+}
+
+.panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0)),
+    #0c0e12;
+  border: 1px solid var(--line);
+}
+
+.shell {
+  padding-inline: var(--shell);
+}
+
+/* fixed film grain, sits above the canvases, below content */
+.grain::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.3;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+}
+
+/* ---------- motion ---------- */
+
+@keyframes drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+/* a node dropping down one hairline of SignalFill. The track is a full-height box, so
+   translating it by its own height moves the node the length of the sweep. It fades at
+   both ends, so nothing ever pops into existence at the edge of the panel. */
+@keyframes signal-drop {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  14%,
+  82% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate3d(0, 100%, 0);
+    opacity: 0;
+  }
+}
+
+.signal-track {
+  animation: signal-drop linear infinite;
+  will-change: transform;
+}
+
+/* the dot grid resolving as the panel crosses the viewport. Coarse on top at both ends,
+   fine through the middle, so it reads as the same pixel dissolve the stills use. Only
+   opacity moves, which keeps all three layers on the compositor. */
+@keyframes signal-px-out {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 0.06;
+  }
+}
+
+@keyframes signal-px-in {
+  0%,
+  100% {
+    opacity: 0.08;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes signal-px-hold {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.65;
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .signal-px-coarse,
+    .signal-px-mid,
+    .signal-px-fine {
+      animation-timeline: view();
+      animation-range: cover;
+      /* auto, not the 0s the shorthand would leave behind: on a progress timeline auto
+         means "span the range", and 0s pins the animation at one keyframe */
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+    }
+    .signal-px-coarse {
+      animation-name: signal-px-out;
+    }
+    .signal-px-mid {
+      animation-name: signal-px-hold;
+    }
+    .signal-px-fine {
+      animation-name: signal-px-in;
+    }
+  }
+}
+
+.marquee-track {
+  animation: drift var(--dur, 38s) linear infinite;
+  will-change: transform;
+}
+.marquee-track.reverse {
+  animation-direction: reverse;
+}
+.marquee:hover .marquee-track {
+  animation-play-state: paused;
+}
+
+/* ---------- mobile motion ----------
+   Everything scroll-driven on desktop is a GSAP timeline gated at min-width:1024px,
+   so below that the page had no motion beyond the reveals. These are native
+   scroll-driven animations: no observer, no rAF, no JS to ship. Chrome and Safari
+   support them; anywhere that does not, the element is simply already in place.
+   Only ever put .rise on something that is always laid out — inside a collapsed
+   0fr accordion row the view() range never resolves and it would stay invisible. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 1.6rem, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 2.4rem, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@supports (animation-timeline: view()) {
+  @media (max-width: 1023px) and (prefers-reduced-motion: no-preference) {
+    /* animation-duration must be `auto` for a progress timeline. The `animation`
+       shorthand would leave it at 0s, which freezes the element on one keyframe: it
+       looks like the reveal is simply not running. */
+    .rise,
+    .rise-slow,
+    .rise-head {
+      animation-duration: auto;
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-timeline: view();
+    }
+    .rise {
+      animation-name: rise;
+      animation-range: entry 4% cover 22%;
+    }
+    .rise-slow {
+      animation-name: rise-in;
+      animation-range: entry 2% cover 30%;
+    }
+    /* headline sections get a longer travel so the section change is felt */
+    .rise-head {
+      animation-name: rise-in;
+      animation-range: entry 0% cover 26%;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+:where(a, button, [tabindex]):focus-visible {
+  outline: 1px solid #4de3ff;
+  outline-offset: 3px;
 }

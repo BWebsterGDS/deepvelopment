@@ -1,0 +1,6 @@
+.next
+node_modules
+.vercel
+
+# 13MB of source PNGs; public/art ships the WebP conversions instead
+art-src
